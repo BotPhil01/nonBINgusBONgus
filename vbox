@@ -1,0 +1,91 @@
+#!/usr/bin/bash
+
+# vbox machine [ start || stop || enum ]
+# vbox machine start [ head || less ] (default less)
+
+h='vbox'
+vms=$(vboxmanage list vms | sed 's/{.*}//')
+cmds="start stop enum con ip"
+usage() {
+    init="$h usage:"
+    echo "$init vbox machine [ start || stop || enum || ip]\n$init vbox machine start [ head || less ] (default less)"
+}
+
+error() {
+    echo "$h error processing command"
+    echo "$h $1"
+    usage
+    exit 1
+}
+
+if [[ $# < 2 ]]; then
+    error "invalid arg count"
+elif [[ ! $(echo $vms | grep "\"$1\"") ]]; then
+    error "invalid vm"
+elif [[ ! $(echo $cmds | grep $2) ]]; then 
+    error "invalid command"
+fi
+
+startvm() {
+    vboxmanage startvm $1 $2
+    if [[ $? != 0 ]]; then
+        echo "$h error starting vm"
+        echo -n "$h try disabling modules kvm and kvm_intel? [Y/n]"
+        read -r ans
+        if [[ $ans == "Y" || $ans == "y" || $ans == "" ]]; then
+            sudo rmmod kvm_intel
+            sudo rmmod kvm
+            vboxmanage startvm $1 $2
+            exit $?
+        fi
+        exit 1
+    fi
+    exit 0
+}
+
+getip() {
+    ip=$(vboxmanage guestproperty enumerate $1 \
+        | grep IP \
+        | grep "'.*'" -o \
+        | sed -e "s/'//g" \
+        | grep "[0-9.]*" -o \
+        | head -n 1
+    )
+    echo "$ip"
+}
+convm() {
+    ip=$(getip $1)
+    echo "attempting to ssh to $ip"
+    ssh vboxuser@$ip -X 
+    if [[ $? != 0 ]]; then 
+	ip=$(getip $1)
+        echo "failed to ssh restarting use Ctrl-C to quit"
+        ssh vboxuser@$ip -X
+        while [[ $? != 0 ]]; do
+            sleep 4
+	    ip=$(getip $1)
+            ssh vboxuser@$ip -X
+        done
+    fi
+}
+
+if [[ $2 == "start" ]]; then
+    if [[ $3 && $3 == "head" ]]; then
+        echo "starting vm $1 in head mode"
+        startvm $1 ""
+    fi
+    echo "starting vm $1 in headless mode"
+    startvm $1 "-type=headless"
+elif [[ $2 == "stop" ]]; then
+    echo "stopping vm $1"
+    vboxmanage controlvm $1 acpipowerbutton
+    exit $?
+elif [[ $2 == "enum" ]]; then
+    echo "enumerating vm $1"
+    vboxmanage guestproperty enumerate $1
+    exit $?
+elif [[ $2 == "con" ]]; then 
+	convm $1
+elif [[ "$2" == "ip" ]]; then
+    vboxmanage guestproperty enumerate $1 | grep -i ip
+fi
