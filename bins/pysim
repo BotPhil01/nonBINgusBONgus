@@ -1,0 +1,2 @@
+dev=$(lsusb | grep CardMan | awk  '{split($0,a," "); print a[2],a[4]}' | sed -s 's/://' | sed -s 's/ /\//')
+~/coding/lab/fyp/pysim/run_shell.sh $dev
