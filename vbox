@@ -2,6 +2,7 @@
 
 # vbox machine [ start || stop || enum ]
 # vbox machine start [ head || less ] (default less)
+# Connection must be configured with prots 25222
 
 h='vbox'
 vms=$(vboxmanage list vms | sed 's/{.*}//')
@@ -27,46 +28,81 @@ elif [[ ! $(echo $cmds | grep $2) ]]; then
 fi
 
 startvm() {
-    vboxmanage startvm $1 $2
-    if [[ $? != 0 ]]; then
-        echo "$h error starting vm"
+    error=$(vboxmanage startvm $1 $2 2>&1 >/dev/null)
+    exitcode=$?
+    if [[ $exitcode == 0 ]]; then
+        exit 0
+    fi
+
+    echo "$h error starting vm"
+    if echo $error | grep -o "0x80004005" &>/dev/null; then
         echo -n "$h try disabling modules kvm and kvm_intel? [Y/n]"
         read -r ans
         if [[ $ans == "Y" || $ans == "y" || $ans == "" ]]; then
             sudo rmmod kvm_intel
             sudo rmmod kvm
-            vboxmanage startvm $1 $2
+            startvm $1 $2
             exit $?
         fi
         exit 1
+    else
+        echo "vbox encountered an unknown error"
+        echo $error
+        exit 1
     fi
-    exit 0
 }
 
 getip() {
-    ip=$(vboxmanage guestproperty enumerate $1 \
-        | grep IP \
-        | grep "'.*'" -o \
-        | sed -e "s/'//g" \
-        | grep "[0-9.]*" -o \
-        | head -n 1
-    )
+    while [ 1 ]; do
+        ip=$(vboxmanage guestproperty enumerate $1 \
+            | grep IP \
+            | grep "'.*'" -o \
+            | sed -e "s/'//g" \
+            | grep "[0-9.]*" -o \
+            | head -n 1
+        )
+        # echo "trying $ip" >&2
+        if ping $ip -W 1 -c 1 &>/dev/null; then
+            # echo "found $ip" >&2
+            break;
+        fi
+        # echo "missed $ip" >&2
+    done
     echo "$ip"
 }
+
+sshavailable() {
+    if vboxmanage showvminfo $1 | grep "Guest Facilities:" &>/dev/null; then
+        if ! vboxmanage showvminfo $1 | grep "Guest Facilities:" | grep -i none &>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
 convm() {
+    # in showvminfo
+    # guest facilities is present if its starting
+    # guest facilities is set to <none> if its not yet started
+    # guest facilities is has info if its started
+
+    while ! sshavailable $1; do
+        echo 'vm not running waiting for vm to start ctrl+c to stop'
+        sleep 2
+    done
     ip=$(getip $1)
     echo "attempting to ssh to $ip"
     ssh vboxuser@$ip -X 
-    if [[ $? != 0 ]]; then 
-	ip=$(getip $1)
-        echo "failed to ssh restarting use Ctrl-C to quit"
-        ssh vboxuser@$ip -X
-        while [[ $? != 0 ]]; do
-            sleep 4
-	    ip=$(getip $1)
-            ssh vboxuser@$ip -X
-        done
-    fi
+ #    if [[ $? != 0 ]]; then 
+	# ip=$(getip $1)
+ #        echo "failed to ssh restarting use Ctrl-C to quit"
+ #        ssh vboxuser@$ip -X
+ #        while [[ $? != 0 ]]; do
+ #            sleep 4
+	#     ip=$(getip $1)
+ #            ssh vboxuser@$ip -X
+ #        done
+ #    fi
 }
 
 if [[ $2 == "start" ]]; then
@@ -86,6 +122,11 @@ elif [[ $2 == "enum" ]]; then
     exit $?
 elif [[ $2 == "con" ]]; then 
 	convm $1
+    exit $?
 elif [[ "$2" == "ip" ]]; then
     vboxmanage guestproperty enumerate $1 | grep -i ip
+    exit $?
+else
+    echo "unidentified command"
+    exit 1
 fi
