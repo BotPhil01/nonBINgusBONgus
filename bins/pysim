@@ -1,2 +1,18 @@
-dev=$(lsusb | grep CardMan | awk  '{split($0,a," "); print a[2],a[4]}' | sed -s 's/://' | sed -s 's/ /\//')
-~/coding/lab/fyp/pysim/run_shell.sh $dev
+#!/usr/bin/env bash
+PYSIMDIR="/home/trp/coding/lab/fyp/pysim"
+# start pcscd
+# pkill -x pcscd
+printf "pcscd process id: "
+if ! pgrep pcscd; then
+    printf "not found\n"
+    sudo pcscd -a -d -T
+fi
+
+# connect to reader slot
+reader="$(pcsc_scan -r | grep -i omni)"
+slot="${reader:0:1}"
+
+echo "slot $slot chosen"
+
+echo "pysim located at $PYSIMDIR"
+$PYSIMDIR/.venv/bin/python3 $PYSIMDIR/pySim-shell.py -p $slot
